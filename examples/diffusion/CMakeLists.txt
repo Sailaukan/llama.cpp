@@ -1,5 +1,18 @@
+set(TARGET llama-diffusion-engine)
+add_library(${TARGET} STATIC diffusion-engine.cpp diffusion-engine.h)
+target_link_libraries(${TARGET} PUBLIC llama llama-common ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PUBLIC cxx_std_17)
+target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+
 set(TARGET llama-diffusion-cli)
 add_executable(${TARGET} diffusion-cli.cpp)
 install(TARGETS ${TARGET} RUNTIME)
 target_link_libraries(${TARGET} PRIVATE llama llama-common ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET llama-diffusion-server)
+add_executable(${TARGET} diffusion-server.cpp)
+install(TARGETS ${TARGET} RUNTIME)
+target_link_libraries(${TARGET} PRIVATE llama-diffusion-engine llama llama-common cpp-httplib ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

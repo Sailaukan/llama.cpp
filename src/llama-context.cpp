@@ -1253,13 +1253,23 @@ int llama_context::encode(const llama_batch & batch_inp) {
     const int64_t n_embd  = hparams.n_embd_inp();
     const int64_t n_vocab = model.vocab.n_tokens();
 
+    // Diffusion models use the encode path for full-context denoising, but they
+    // only need logits for the masked rows that will be sampled this step.
+    const bool output_all = cparams.embeddings || !llm_arch_is_diffusion(model.arch);
+
     // note: during encode, we always pass the full sequence starting from pos = 0
-    if (!balloc->init(batch_inp, model.vocab, nullptr, n_embd, cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max, true)) {
+    if (!balloc->init(batch_inp, model.vocab, nullptr, n_embd, cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max, output_all)) {
         LLAMA_LOG_ERROR("%s: failed to initialize batch\n", __func__);
         return -1;
     }
 
-    const uint32_t n_tokens = balloc->get_n_tokens();
+    const uint32_t n_tokens      = balloc->get_n_tokens();
+    const uint32_t n_outputs_all = balloc->get_n_outputs();
+
+    if (n_outputs_all == 0) {
+        LLAMA_LOG_ERROR("%s: encode requires at least one output\n", __func__);
+        return -1;
+    }
 
     // [TAG_NO_CACHE_PAD]
     // TODO: add new split mode where we pad the input sequences so that ubatch.equal_seqs == true
@@ -1280,16 +1290,21 @@ int llama_context::encode(const llama_batch & batch_inp) {
     n_queued_tokens += n_tokens;
 
     // reserve output buffer
-    if (output_reserve(n_tokens) < n_tokens) {
-        LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_tokens);
+    if (output_reserve(n_outputs_all) < n_outputs_all) {
+        LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_outputs_all);
         return -2;
     };
 
-    for (uint32_t i = 0; i < n_tokens; ++i) {
-        output_ids[i] = i;
+    if (n_outputs_all > 0) {
+        auto & out_ids = balloc->get_out_ids();
+        GGML_ASSERT(out_ids.size() == (size_t) n_outputs_all);
+
+        for (uint32_t i = 0; i < n_outputs_all; ++i) {
+            output_ids[out_ids[i]] = i;
+        }
     }
 
-    n_outputs = n_tokens;
+    n_outputs = n_outputs_all;
 
     const auto causal_attn_org = cparams.causal_attn;
 
@@ -1321,7 +1336,7 @@ int llama_context::encode(const llama_batch & batch_inp) {
         GGML_ASSERT(backend_res != nullptr);
         GGML_ASSERT(logits.data != nullptr);
 
-        ggml_backend_tensor_get_async(backend_res, t_logits, logits.data, 0, n_tokens*n_vocab*sizeof(float));
+        ggml_backend_tensor_get_async(backend_res, t_logits, logits.data, 0, n_outputs_all*n_vocab*sizeof(float));
     }
 
     // extract embeddings
